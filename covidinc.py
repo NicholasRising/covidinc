@@ -9,35 +9,35 @@ INFECT_RATE = 0.1
 DEATH_RATE = 0.01
 CURE_RATE = 0.02
 UNCURE_RATE = 0.001
+TRAVEL_RATE = 0.00001
 
 class State:
-    def __init__(self, name, pop, density, image):
+    def __init__(self, name, pop, image): # TODO: Store land cover (not density) so that density can be dynamic with living population
         self.name = name
         self.pop = pop
-        self.uncured = pop
+        self.healthy = pop
         self.sick = 0
-        self.cured = 0
+        self.immune = 0
         self.dead = 0
-        self.density = density
         self.image = image
-        self.history = {'Uncured': [], 'Sick': [], 'Cured': [], 'Dead': []}
+        self.history = {'Healthy': [], 'Sick': [], 'Immune': [], 'Dead': []}
 
     def __str__(self):
-        out = f'Uncured: {int((self.uncured / self.pop) * 100)}%, '
+        out = f'Healthy: {int((self.healthy / self.pop) * 100)}%, '
         out += f'Sick: {int((self.sick / self.pop) * 100)}%, '
-        out += f'Cured: {int((self.cured / self.pop) * 100)}%, '
+        out += f'Immune: {int((self.immune / self.pop) * 100)}%, '
         out += f'Dead: {int((self.dead / self.pop) * 100)}%'
         return out
 
-    def update(self):
+    def update(self): # TODO: Factor density into calculations
         if self.sick < 100:
             for i in range(self.sick):
-                if random.random() < INFECT_RATE and self.uncured > 0:
+                if random.random() < INFECT_RATE and self.healthy > 0:
                     self.infect(1)
         else:
             infected = int(self.sick * random.random() * INFECT_RATE)
-            if infected > self.uncured:
-                infected = self.uncured
+            if infected > self.healthy:
+                infected = self.healthy
             self.infect(infected)
         
         if self.sick < 100:
@@ -56,27 +56,27 @@ class State:
                 dead = self.sick
             self.kill(dead)
 
-        if self.cured < 100:
-            for i in range(self.cured):
-                if random.random() < UNCURE_RATE and self.cured > 0:
+        if self.immune < 100:
+            for i in range(self.immune):
+                if random.random() < UNCURE_RATE and self.immune > 0:
                     self.uncure(1)
         else:
-            uncured = int(self.cured * random.random() * UNCURE_RATE)
-            if uncured > self.cured:
-                uncured = self.cured
+            uncured = int(self.immune * random.random() * UNCURE_RATE)
+            if uncured > self.immune:
+                uncured = self.immune
             self.uncure(uncured)
         
-        self.history['Uncured'].append(self.uncured)
+        self.history['Healthy'].append(self.healthy)
         self.history['Sick'].append(self.sick)
-        self.history['Cured'].append(self.cured)
+        self.history['Immune'].append(self.immune)
         self.history['Dead'].append(self.dead)
 
     def infect(self, count):
         self.sick += count
-        self.uncured -= count
+        self.healthy -= count
 
     def cure(self, count):
-        self.cured += count
+        self.immune += count
         self.sick -= count
 
     def kill(self, count):
@@ -84,8 +84,8 @@ class State:
         self.sick -= count
 
     def uncure(self, count):
-        self.uncured += count
-        self.cured -= count
+        self.healthy += count
+        self.immune -= count
 
     def get_color(self):
         redness = int((1 - self.dead / self.pop) * 255)
@@ -117,7 +117,7 @@ def main():
             name = name[:space_index] + ' ' + name[space_index + 1].upper() + name[(space_index + 2):]
         data = line.split(',')
         image = pygame.transform.scale(pygame.image.load(os.path.join(state_folder, filename)), resolution)
-        states.append(State(name, int(data[0]), float(data[1]), image))
+        states.append(State(name, int(data[0]), image))
     border = pygame.transform.scale(pygame.image.load("map_images/background.png"), resolution)
 
     first_state = states[random.randrange(50)]
@@ -128,8 +128,37 @@ def main():
     while not done:
         for state in states:
             state.update()
+            healthy_travel = int(state.healthy * TRAVEL_RATE)
+            sick_travel = int(state.sick * TRAVEL_RATE * 0.5) # Sick people are half as likely to travel
+            immune_travel = int(state.sick * TRAVEL_RATE)
 
-        if tick % 100 == 0:
+            state.pop -= healthy_travel + sick_travel + immune_travel
+            state.healthy -= healthy_travel
+            state.sick -= sick_travel
+            state.immune -= immune_travel
+
+            for i in range(healthy_travel):
+                dest_index = random.randrange(49)
+                if states[dest_index] == state: # Kinda defeats the purpose of travel if you stay in your home state
+                    dest_index = 49
+                states[dest_index].pop += 1
+                states[dest_index].healthy += 1
+
+            for i in range(sick_travel):
+                dest_index = random.randrange(49)
+                if states[dest_index] == state:
+                    dest_index = 49
+                states[dest_index].pop += 1
+                states[dest_index].sick += 1
+
+            for i in range(immune_travel):
+                dest_index = random.randrange(49)
+                if states[dest_index] == state:
+                    dest_index = 49
+                states[dest_index].pop += 1
+                states[dest_index].immune += 1
+
+        if tick % 10 == 0:
             update_map(screen, states, border)
         tick += 1
         clock.tick(60)
