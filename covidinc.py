@@ -1,15 +1,27 @@
+from multiprocessing.managers import ValueProxy
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 
 import plotly.graph_objects as go
 import pygame
 import random
+import sys
 
-INFECT_RATE = 0.1
-DEATH_RATE = 0.01
-CURE_RATE = 0.02
-UNCURE_RATE = 0.001
-TRAVEL_RATE = 0.00001
+INFECT_RATE = 0.1 
+DEATH_RATE = 0.005
+CURE_RATE = 0.02 
+UNCURE_RATE = 0.001 
+TRAVEL_RATE = 0.00001*75 
+VAX_RATE = 0
+
+
+
+APOCALYPSE = False
+if len(sys.argv) >= 2:
+    if sys.argv[1] == "woodwellgeobestgeo":
+        APOCALYPSE = True
+    if sys.argv[1] == "vax":
+        VAX_RATE = 0.002
 
 class State:
     def __init__(self, name, pop, image): # TODO: Store land cover (not density) so that density can be dynamic with living population
@@ -29,7 +41,7 @@ class State:
         out += f'Dead: {int((self.dead / self.pop) * 100)}%'
         return out
 
-    def update(self): # TODO: Factor density into calculations
+    def update(self,vax_created): # TODO: Factor density into calculations
         if self.sick < 100:
             for i in range(self.sick):
                 if random.random() < INFECT_RATE and self.healthy > 0:
@@ -56,15 +68,22 @@ class State:
                 dead = self.sick
             self.kill(dead)
 
-        if self.immune < 100:
-            for i in range(self.immune):
-                if random.random() < UNCURE_RATE and self.immune > 0:
-                    self.uncure(1)
-        else:
-            uncured = int(self.immune * random.random() * UNCURE_RATE)
-            if uncured > self.immune:
-                uncured = self.immune
-            self.uncure(uncured)
+        if not vax_created:
+            if self.immune < 100:
+                for i in range(self.immune):
+                    if random.random() < UNCURE_RATE and self.immune > 0:
+                        self.uncure(1)
+            else:
+                uncured = int(self.immune * random.random() * UNCURE_RATE)
+                if uncured > self.immune:
+                    uncured = self.immune
+                self.uncure(uncured)
+
+        if vax_created:
+            cured = int(self.healthy * random.random() * CURE_RATE)
+            if cured > self.healthy:
+                cured = self.healthy
+            self.vax(cured)
         
         self.history['Healthy'].append(self.healthy)
         self.history['Sick'].append(self.sick)
@@ -79,6 +98,10 @@ class State:
         self.immune += count
         self.sick -= count
 
+    def vax(self,count):
+        self.immune += count
+        self.healthy -= count
+
     def kill(self, count):
         self.dead += count
         self.sick -= count
@@ -89,18 +112,47 @@ class State:
 
     def get_color(self):
         redness = int((1 - self.dead / self.pop) * 255)
-        brightness = int((1 - self.sick / self.pop) * redness)
+        base_color = 15
+        brightness = 255 if self.sick == 0 else (int((1 - self.sick / self.pop) * redness *((255-base_color)/255)) - base_color) 
         return (redness, brightness, brightness)
 
-def update_map(screen, states, border):
+def update_map(screen, states, border,logo,vax_percent):
     screen.fill((150, 200, 255))
+    total_num = 0
+    sick_num = 0
+    healthy_num = 0
+    cured_num = 0
+    dead_num = 0
     for state in states:
         state.image.fill(state.get_color(), special_flags = pygame.BLEND_MIN)
         screen.blit(state.image, (0, 0))
+
+        total_num += state.pop
+        sick_num += state.sick
+        cured_num += state.immune
+        dead_num += state.dead
+        healthy_num += state.healthy
+
+    l_b = 300
+    pygame.draw.rect(screen,(0,255,0),pygame.Rect(2,100,10,l_b*(healthy_num/total_num))) #healthy
+    pygame.draw.rect(screen,(255,0,0),pygame.Rect(14,100,10,l_b*(sick_num/total_num))) #sick
+    pygame.draw.rect(screen,(0,0,0),pygame.Rect(26,100,10,l_b*(dead_num/total_num))) #dead
+    pygame.draw.rect(screen,(0,0,255),pygame.Rect(38,100,10,l_b*(cured_num/total_num))) #cured
+    pygame.draw.rect(screen,(255,255,255) if vax_percent<1 else (200,200,200),pygame.Rect(50,100,10,l_b*vax_percent)) #vaxxine progress
+    
+    screen.blit(logo,(0,0))
     screen.blit(border, (0, 0))
     pygame.display.flip()
 
 def main():
+
+    if APOCALYPSE:
+        global INFECT_RATE
+        INFECT_RATE *= 10
+        global DEATH_RATE
+        DEATH_RATE *= 30
+        global VAX_RATE
+        VAX_RATE = 0
     pygame.init()
     resolution = (960, 540)
     screen = pygame.display.set_mode(resolution)
@@ -118,18 +170,24 @@ def main():
         data = line.split(',')
         image = pygame.transform.scale(pygame.image.load(os.path.join(state_folder, filename)), resolution)
         states.append(State(name, int(data[0]), image))
-    border = pygame.transform.scale(pygame.image.load("map_images/background.png"), resolution)
 
+    vax_percent = 0
+
+    border = pygame.transform.scale(pygame.image.load("map_images/background.png"), resolution)
+    logo = pygame.transform.scale(pygame.image.load("map_images/logo.png"), (130,58))
     first_state = states[random.randrange(50)]
     first_state.infect(100)
     print(f'A mysterious illness begins in {first_state.name}')
 
     tick = 0
     while not done:
+        if vax_percent < 1:
+            vax_percent += VAX_RATE
+
         for state in states:
-            state.update()
+            state.update(vax_percent >= 1)
             healthy_travel = int(state.healthy * TRAVEL_RATE)
-            sick_travel = int(state.sick * TRAVEL_RATE * 0.5) # Sick people are half as likely to travel
+            sick_travel = int(state.sick * TRAVEL_RATE * 0.75) # Sick people are less likely to travel
             immune_travel = int(state.sick * TRAVEL_RATE)
 
             state.pop -= healthy_travel + sick_travel + immune_travel
@@ -158,8 +216,9 @@ def main():
                 states[dest_index].pop += 1
                 states[dest_index].immune += 1
 
-        if tick % 10 == 0:
-            update_map(screen, states, border)
+
+        if tick % 5 == 0:
+            update_map(screen, states, border,logo,vax_percent)
         tick += 1
         clock.tick(60)
 
